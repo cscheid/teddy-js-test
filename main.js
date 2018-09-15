@@ -2,9 +2,7 @@
 
 var pts = [];
 var downPos;
-
 var minDistance = 30;
-
 var isDown = false;
 d3.select("#main")
     .append("rect")
@@ -26,6 +24,7 @@ d3.select("#main")
         var pt = [d3.event.offsetX, d3.event.offsetY];
         if (distance(downPos, pt) < minDistance)
             return;
+        downPos = pt;
         pts.push(d3.event.offsetX);
         pts.push(d3.event.offsetY);
         updateDelaunay();
@@ -40,177 +39,6 @@ function updateDelaunay()
     } catch (e) {
         console.log(e);
     }
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-function distance(p1, p2) {
-    var dx = p2[0] - p1[0], dy = p2[1] - p1[1];
-    return Math.sqrt(dx * dx + dy * dy);
-}
-
-function subtractPoint(p1, p2) {
-    return [p1[0] - p2[0], p1[1] - p2[1]];
-}
-
-function dotProduct(p1, p2) {
-    return p1[0] * p2[0] + p1[1] * p2[1];
-}
-
-function crossProduct(p1, p2) {
-    return p1[0] * p2[1] - p1[1] * p2[0];
-}
-
-function vecLength(v) {
-    return distance(v, v);
-}
-
-function nextVertexInTri(i) {
-    if (i % 3 === 2)
-        return i - 2;
-    else
-        return i + 1;
-}
-
-function pointFromTri(del, pointId) {
-    return [del.coords[2*pointId], del.coords[2*pointId+1]];
-}
-
-function getDelaunayTri(del, triId) {
-    var p1 = pointFromTri(del, del.triangles[3*triId]);
-    var p2 = pointFromTri(del, del.triangles[3*triId+1]);
-    var p3 = pointFromTri(del, del.triangles[3*triId+2]);
-    return [p1, p2, p3];
-}
-
-function barycenterOfTri(p1, p2, p3) {
-    return [(p1[0] + p2[0] + p3[0]) / 3, (p1[1] + p2[1] + p3[1]) / 3];
-}
-
-function signedArea(p1, p2, p3) {
-    var s1 = subtractPoint(p2, p1); // p1->p2
-    var s2 = subtractPoint(p1, p3);
-    return crossProduct(s1, s2) / 2;
-}
-
-// pointInsideTri assumes p1, p2, p3 in CCW order.
-function pointInsideTri(p1, p2, p3, p) {
-    if (signedArea(p1, p2, p) < 0) return false;
-    if (signedArea(p2, p3, p) < 0) return false;
-    if (signedArea(p3, p1, p) < 0) return false;
-    return true;
-}
-
-// https://en.wikipedia.org/wiki/Circumscribed_circle#Circumcenter_coordinates
-function circumcenter(a, b, c) {
-    var ad = a[0] * a[0] + a[1] * a[1];
-    var bd = b[0] * b[0] + b[1] * b[1];
-    var cd = c[0] * c[0] + c[1] * c[1];
-    var d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-    var cx = 1 / d * (ad * (b[1] - c[1]) + bd * (c[1] - a[1]) + cd * (a[1] - b[1]));
-    var cy = 1 / d * (ad * (c[0] - b[0]) + bd * (a[0] - c[0]) + cd * (b[0] - a[0]));
-    return [
-        cx, cy, distance([cx, cy], a)
-    ];
-}
-
-// barycenterInsideShape walks the triangle mesh monotonically until
-// finding a shape edge, then checks a local condition.
-
-// barycenterInsideShape assumes that the shape is implicitly given by
-// the edges 0-1-2-3-4-5-6-7-8-...-n-0, and the shape is given in CCW
-// order.
-
-function barycenterInsideShape(del, pts, i)
-{
-    // first: is this an easy triangle?
-    var nPoints = pts.length / 2;
-    var di1 = del.triangles[3*i+1] - del.triangles[3*i];
-    var di2 = del.triangles[3*i+2] - del.triangles[3*i+1];
-    var di3 = del.triangles[3*i  ] - del.triangles[3*i+2];
-    if (di1 === 1 || di2 === 1 || di3 === 1 ||
-        di1 === pts.length-1 || di2 === pts.length-1 || di3 === pts.length-1) {
-        // we found a CCW edge: we're inside the shape
-        return true;
-    }
-    if (di1 === -1 || di2 === -1 || di3 === -1 ||
-        di1 === 1-pts.length || di2 === 1-pts.length || di3 === 1-pts.length) {
-        // we found a CW edge: we're outside the shape
-        return false;
-    }
-
-    // else, walk to the triangle that increases the x coordinate
-    // the barycenter, repeat.
-
-    var thisTriangle = getDelaunayTri(del, i);
-    var thisBarycenter = barycenterOfTri(
-        thisTriangle[0], thisTriangle[1], thisTriangle[2]);
-    // find a half-edge that's available
-    for (var h=0; h<3; ++h) {
-        var he = del.halfedges[3*i+h];
-        if (he === -1)
-            continue;
-        var triangleOfHalfEdge = ~~(he / 3);
-        var neighborTri = getDelaunayTri(del, triangleOfHalfEdge);
-        var neighborBarycenter = barycenterOfTri(
-            neighborTri[0], neighborTri[1], neighborTri[2]);
-        if (neighborBarycenter[0] > thisBarycenter[0]) {
-            return barycenterInsideShape(del, pts, triangleOfHalfEdge);
-        }
-    }
-
-    // couldn't find an available half-edge, that means we ran into
-    // the convex hull of the DT without crossing the shape, so we
-    // must have been outside to begin with
-
-    return false;
-}
-
-function determineTriangleSides(del, pts)
-{
-    var triangleSides = d3.range(del.triangles.length / 3).map((i) => "unknown");
-    var nPts = pts.length / 2;
-    var queue = d3.range(del.triangles.length / 3);
-    while (queue.length > 0) {
-        var triId = queue.pop();
-        if (triangleSides[triId] !== "unknown")
-            continue;
-        // we don't know about this one, so let's run the slow test.
-        var inside = barycenterInsideShape(del, pts, triId);
-
-        // now we flood-fill the graph with the result
-        var stack = [triId];
-        while (stack.length > 0) {
-            var triIndex = stack.pop();
-            if (triangleSides[triIndex] !== "unknown") {
-                if (triangleSides[triIndex] !== inside) {
-                    console.error("Doesn't look like we've sampled this shape enough.");
-                    debugger;
-                }
-                continue;
-            }
-            triangleSides[triIndex] = inside;
-            // find neighbor triangles
-            for (var h=0; h<3; ++h) {
-                var dIndex = Math.abs(del.triangles[3*triIndex+h%3] -
-                                      del.triangles[3*triIndex+(h+1)%3]);
-                if (dIndex == 1 || dIndex == nPts - 1)
-                    continue; // we hit a shape edge
-                var he = del.halfedges[3*triIndex+h];
-                if (he === -1)
-                    continue; // we hit a boundary of the DT
-                var triangleOfHalfEdge = ~~(he / 3);
-                if (triangleSides[triangleOfHalfEdge] === "unknown") {
-                    stack.push(triangleOfHalfEdge);
-                } else if (triangleSides[triangleOfHalfEdge] !== inside) {
-                    console.error("Doesn't look like we've sampled this shape enough.");
-                    debugger;
-                }
-            }
-        }
-    }
-
-    return triangleSides;
 }
 
 function drawDelaunay(del, pts)
@@ -279,5 +107,121 @@ function drawDelaunay(del, pts)
         .attr("cy", (d) => del.coords[d*2+1])
         .attr("r", 5)
         .attr("fill", "brown");
+
+    // update three.js scene
+    meshes.forEach((m) => scene.remove(m));
+    meshes = circumcircles.filter(c => c[1]).map(c => {
+        console.log(c);
+        var ballMesh = new THREE.Mesh( ballGeometry, material );
+        
+        ballMesh.position.set((c[0][0] - 300) / 20, (300 - c[0][1]) / 20, 0);
+        ballMesh.scale.set(c[0][2] / 20, c[0][2] / 20, c[0][2] / 20);
+        ballMesh.castShadow = true;
+        return ballMesh;
+    });
+    meshes.forEach(m => scene.add(m));
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+// three.JS part
+
+var container = document.getElementById( 'three-container' );
+camera = new THREE.PerspectiveCamera( 30, 1, 1, 5000 );
+camera.position.set( 30, 30, 250 );
+camera.lookAt( new THREE.Vector3(0, 0, 0) );
+scene = new THREE.Scene();
+scene.background = new THREE.Color().setHSL( 0.6, 0, 1 );
+scene.fog = new THREE.Fog( scene.background, 1, 5000 );
+// LIGHTS
+hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 0.6 );
+hemiLight.color.setHSL( 0.6, 1, 0.6 );
+hemiLight.groundColor.setHSL( 0.095, 1, 0.75 );
+hemiLight.position.set( 0, 50, 0 );
+scene.add( hemiLight );
+hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
+scene.add( hemiLightHelper );
+//
+dirLight = new THREE.DirectionalLight( 0xffffff, 1 );
+dirLight.color.setHSL( 0.1, 1, 0.95 );
+dirLight.position.set( -1, 1.75, 1 );
+dirLight.position.multiplyScalar( 30 );
+scene.add( dirLight );
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+var d = 50;
+dirLight.shadow.camera.left = -d;
+dirLight.shadow.camera.right = d;
+dirLight.shadow.camera.top = d;
+dirLight.shadow.camera.bottom = -d;
+dirLight.shadow.camera.far = 3500;
+dirLight.shadow.bias = -0.0001;
+dirLightHeper = new THREE.DirectionalLightHelper( dirLight, 10 );
+scene.add( dirLightHeper );
+// GROUND
+var groundGeo = new THREE.PlaneBufferGeometry( 10000, 10000 );
+var groundMat = new THREE.MeshPhongMaterial( { color: 0xffffff, specular: 0x050505 } );
+groundMat.color.setHSL( 0.095, 1, 0.75 );
+var ground = new THREE.Mesh( groundGeo, groundMat );
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -33;
+scene.add( ground );
+ground.receiveShadow = true;
+// SKYDOME
+var vertexShader = document.getElementById( 'vertexShader' ).textContent;
+var fragmentShader = document.getElementById( 'fragmentShader' ).textContent;
+var uniforms = {
+    topColor:    { value: new THREE.Color( 0x0077ff ) },
+    bottomColor: { value: new THREE.Color( 0xffffff ) },
+    offset:      { value: 33 },
+    exponent:    { value: 0.6 }
+};
+uniforms.topColor.value.copy( hemiLight.color );
+scene.fog.color.copy( uniforms.bottomColor.value );
+var skyGeo = new THREE.SphereBufferGeometry( 4000, 32, 15 );
+var skyMat = new THREE.ShaderMaterial( { vertexShader: vertexShader, fragmentShader: fragmentShader, uniforms: uniforms, side: THREE.BackSide } );
+var sky = new THREE.Mesh( skyGeo, skyMat );
+scene.add( sky );
+// MODEL
+
+var ballGeometry = new THREE.SphereBufferGeometry( 1, 32, 32 );
+var material = new THREE.MeshPhysicalMaterial( {
+    color: new THREE.Color().setHSL( 0, 0.5, 0.25 ),
+    metalness: 0,
+    roughness: 0.5,
+    clearCoat:  0,
+    clearCoatRoughness: 0,
+    reflectivity: 0,
+    envMap: null
+} );
+
+var meshes = [];
+var ballMesh = new THREE.Mesh( ballGeometry, material );
+ballMesh.position.set(0, 0, 0);
+ballMesh.rotation.y = Math.PI;
+ballMesh.castShadow = true;
+meshes.push(ballMesh);
+
+meshes.forEach(m => scene.add(m));
+
+// RENDERER
+renderer = new THREE.WebGLRenderer( { antialias: true } );
+renderer.setPixelRatio( window.devicePixelRatio );
+renderer.setSize(600, 600);
+container.appendChild( renderer.domElement );
+renderer.gammaInput = true;
+renderer.gammaOutput = true;
+renderer.shadowMap.enabled = true;
+
+function animate() {
+    requestAnimationFrame( animate );
+    render();
+}
+
+animate();
+
+function render() {
+    renderer.render( scene, camera );
 }
 
