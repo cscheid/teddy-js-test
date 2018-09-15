@@ -33,11 +33,13 @@ d3.select("#main")
 
 function updateDelaunay()
 {
-    if (pts.length <= 4)
-        return;
-    var del = new Delaunator(pts);
+    try {
+        var del = new Delaunator(pts);
         
-    drawDelaunay(del, pts);
+        drawDelaunay(del, pts);
+    } catch (e) {
+        console.log(e);
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -112,42 +114,12 @@ function circumcenter(a, b, c) {
     ];
 }
 
-// returns the index of the triangle containing the point in the
-// delaunay triangulation
-//
-// returns -1 if point is outside the delaunay triangulation.
-//
-// this naive implementatino takes time O(|T|)
-function pointLocate(del, pt)
-{
-    for (var i=0; i<del.triangles.length / 3; ++i) {
-        var tri = getDelaunayTri(del, i);
-        if (pointInsideTri(tri[0], tri[1], tri[2], pt))
-            return i;
-    }
-    return -1;
-}
-
-// circumcenterInsideShape locates the circumcenter in a triangle of
-// the delaunay triangulation and defers to barycenterInsideShape
-function circumcenterInsideShape(del, pts, i)
-{
-    var pt = circumcenter(pointFromTri(del, del.triangles[3*i]),
-                          pointFromTri(del, del.triangles[3*i+1]),
-                          pointFromTri(del, del.triangles[3*i+2]));
-    var triId = pointLocate(del, pt);
-    if (triId === -1)
-        return false;
-    return barycenterInsideShape(del, pts, triId);
-}
-
 // barycenterInsideShape walks the triangle mesh monotonically until
-// finding a shape edge, then checks a local condition
+// finding a shape edge, then checks a local condition.
 
-// barycenterInsideShape assumes that the shape is implicitly given
-// by the edges 0-1-2-3-4-5-6-7-8-...-n-0
-
-// we first locate the point inside 
+// barycenterInsideShape assumes that the shape is implicitly given by
+// the edges 0-1-2-3-4-5-6-7-8-...-n-0, and the shape is given in CCW
+// order.
 
 function barycenterInsideShape(del, pts, i)
 {
@@ -194,21 +166,64 @@ function barycenterInsideShape(del, pts, i)
     return false;
 }
 
+function determineTriangleSides(del, pts)
+{
+    var triangleSides = d3.range(del.triangles.length / 3).map((i) => "unknown");
+    var nPts = pts.length / 2;
+    var queue = d3.range(del.triangles.length / 3);
+    while (queue.length > 0) {
+        var triId = queue.pop();
+        if (triangleSides[triId] !== "unknown")
+            continue;
+        // we don't know about this one, so let's run the slow test.
+        var inside = barycenterInsideShape(del, pts, triId);
+
+        // now we flood-fill the graph with the result
+        var stack = [triId];
+        while (stack.length > 0) {
+            var triIndex = stack.pop();
+            if (triangleSides[triIndex] !== "unknown") {
+                if (triangleSides[triIndex] !== inside) {
+                    console.error("Doesn't look like we've sampled this shape enough.");
+                    debugger;
+                }
+                continue;
+            }
+            triangleSides[triIndex] = inside;
+            // find neighbor triangles
+            for (var h=0; h<3; ++h) {
+                var dIndex = Math.abs(del.triangles[3*triIndex+h%3] -
+                                      del.triangles[3*triIndex+(h+1)%3]);
+                if (dIndex == 1 || dIndex == nPts - 1)
+                    continue; // we hit a shape edge
+                var he = del.halfedges[3*triIndex+h];
+                if (he === -1)
+                    continue; // we hit a boundary of the DT
+                var triangleOfHalfEdge = ~~(he / 3);
+                if (triangleSides[triangleOfHalfEdge] === "unknown") {
+                    stack.push(triangleOfHalfEdge);
+                } else if (triangleSides[triangleOfHalfEdge] !== inside) {
+                    console.error("Doesn't look like we've sampled this shape enough.");
+                    debugger;
+                }
+            }
+        }
+    }
+
+    return triangleSides;
+}
+
 function drawDelaunay(del, pts)
 {
-    if (pts.length > 20) {
-        console.log(del);
-        debugger;
-    }
-    
     d3.select("#main").selectAll("g").remove();
+
+    var triangleSides = determineTriangleSides(del, pts);
 
     var circumcircles = d3.range(del.triangles.length / 3).map(function(i) {
         var a = pointFromTri(del, del.triangles[3*i]);
         var b = pointFromTri(del, del.triangles[3*i+1]);
         var c = pointFromTri(del, del.triangles[3*i+2]);
-        return [circumcenter(a,b,c),
-                circumcenterInsideShape(del, pts, i)];
+        return [circumcenter(a,b,c), triangleSides[i]];
     });
 
     var circumCircleSVG = d3.select("#main")
