@@ -2,7 +2,7 @@
 
 var pts = [];
 var downPos;
-var minDistance = 30;
+var minDistance = 15;
 var isDown = false;
 d3.select("#main")
     .append("rect")
